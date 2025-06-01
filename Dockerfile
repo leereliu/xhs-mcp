@@ -4,12 +4,11 @@ FROM python:3.12-slim
 
 # 安装 Node.js 20.11.1
 RUN apt-get update && apt-get install -y \
-    curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
+    curl &&
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &&
+    apt-get install -y nodejs &&
+    apt-get clean &&
+    rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
@@ -23,10 +22,10 @@ RUN pip install uv
 # 使用 uv 安装项目依赖
 RUN uv sync
 
+RUN npm install --frozen-lockfile
+
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
-
-
 
 # 启动命令
 CMD ["uv", "--directory","/app","run","main.py"]

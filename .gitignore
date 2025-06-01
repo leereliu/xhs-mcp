@@ -10,3 +10,5 @@ static/
 # Virtual environments
 .venv
 .idea
+node_modules/
+temp/
