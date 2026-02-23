@@ -1,214 +1,63 @@
-from typing import Any, List, Dict, Optional
-import asyncio
 import json
 import os
+import argparse
 from datetime import datetime
-from mcp.server.fastmcp import FastMCP, Context
+from loguru import logger
+from mcp.server.fastmcp import FastMCP
+
+import sys
+
+# 切换工作目录到 spider 目录下，因为 spider 项目里面的文件读取都是用的相对路径（比如 '../static/' 等）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+spider_dir = os.path.join(current_dir, 'spider')
+
+# 为了能让 spider 内部的代码找到相对模块，我们切换进去
+os.chdir(spider_dir)
+sys.path.append(spider_dir)
 
 import requests
-from api.xhs_api import XhsApi
-import logging
-from urllib.parse import urlparse, parse_qs
-import argparse
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# 强制让 requests 忽略 SSL
+old_request = requests.Session.request
+def new_request(*args, **kwargs):
+    kwargs['verify'] = False
+    return old_request(*args, **kwargs)
+requests.Session.request = new_request
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from spider.main import Data_Spider
+from spider.xhs_utils.common_util import init
+import spider.apis.xhs_pc_apis as spider_api
 
+# 强制替换 spider 内部所有的 get / post 方法来规避 SSL
+old_get = spider_api.requests.get
+def new_get(*args, **kwargs):
+    kwargs["verify"] = False
+    return old_get(*args, **kwargs)
+spider_api.requests.get = new_get
+
+old_post = spider_api.requests.post
+def new_post(*args, **kwargs):
+    kwargs["verify"] = False
+    return old_post(*args, **kwargs)
+spider_api.requests.post = new_post
+
+# 配置参数
 parser = argparse.ArgumentParser()
-
 parser.add_argument("--type", type=str, default='stdio')
 parser.add_argument("--port", type=int, default=11451)
-
 args = parser.parse_args()
 
+# 初始化 MCP
 mcp = FastMCP("小红书", port=args.port)
 
-xhs_cookie = os.getenv('XHS_COOKIE')
+# 初始化爬虫对象
+cookies_str, base_path = init()
+data_spider = Data_Spider()
 
-xhs_api = XhsApi(cookie=xhs_cookie)
-
-
-def get_nodeid_token(url=None, note_ids=None):
-    if note_ids is not None:
-        note_id = note_ids[0,24]
-        xsec_token = note_ids[24:]
-        return {"note_id": note_id, "xsec_token": xsec_token}
-    parsed_url = urlparse(url)
-    query_params = parse_qs(parsed_url.query)
-
-    note_id = parsed_url.path.split('/')[-1]
-    xsec_token = None
-    xsec_token_list = query_params.get('xsec_token', [None])
-    if len(xsec_token_list) > 0:
-        xsec_token = xsec_token_list[0]
-    return {"note_id": note_id, "xsec_token": xsec_token}
-
-
-@mcp.tool()
-async def check_cookie() -> str:
-    """检测cookie是否失效
-
-    """
-    try:
-        data = await xhs_api.get_me()
-
-        if 'success' in data and data['success'] == True:
-            return "cookie有效"
-        else:
-            return "cookie已失效"
-    except Exception as e:
-        logger.error(e)
-        return "cookie已失效"
-
-
-
-@mcp.tool()
-async def home_feed() -> str:
-    """获取首页推荐笔记
-
-    """
-    data = await xhs_api.home_feed()
-    result = "搜索结果：\n\n"
-    if 'data' in data and 'items' in data['data'] and len(data['data']['items']) > 0:
-        for i in range(0, len(data['data']['items'])):
-            item = data['data']['items'][i]
-            if 'note_card' in item and 'display_title' in item['note_card']:
-                title = item['note_card']['display_title']
-                liked_count = item['note_card']['interact_info']['liked_count']
-                # cover=item['note_card']['cover']['url_default']
-                url = f'https://www.xiaohongshu.com/explore/{item["id"]}?xsec_token={item["xsec_token"]}'
-                result += f"{i}. {title}  \n 点赞数:{liked_count} \n   链接: {url}  \n\n"
-    else:
-        result = await check_cookie()
-        if "有效" in result:
-            result = f"未找到相关的笔记"
-    return result
-
-@mcp.tool()
-async def search_notes(keywords: str) -> str:
-    """根据关键词搜索笔记
-
-        Args:
-            keywords: 搜索关键词
-    """
-
-    data = await xhs_api.search_notes(keywords)
-    logger.info(f'keywords:{keywords},data:{data}')
-    result = "搜索结果：\n\n"
-    if 'data' in data and 'items' in data['data'] and len(data['data']['items']) > 0:
-        for i in range(0, len(data['data']['items'])):
-            item = data['data']['items'][i]
-            if 'note_card' in item and 'display_title' in item['note_card']:
-                title = item['note_card']['display_title']
-                liked_count = item['note_card']['interact_info']['liked_count']
-                # cover=item['note_card']['cover']['url_default']
-                url = f'https://www.xiaohongshu.com/explore/{item["id"]}?xsec_token={item["xsec_token"]}'
-                result += f"{i}. {title}  \n 点赞数:{liked_count} \n   链接: {url}  \n\n"
-    else:
-        result = await check_cookie()
-        if "有效" in result:
-            result = f"未找到与\"{keywords}\"相关的笔记"
-    return result
-
-
-@mcp.tool()
-async def get_note_content(url: str) -> str:
-    """获取笔记内容,参数url要带上xsec_token
-
-    Args:
-        url: 笔记 url
-    """
-    params = get_nodeid_token(url=url)
-    data = await xhs_api.get_note_content(**params)
-    logger.info(f'url:{url},data:{data}')
-    result = ""
-    if 'data' in data and 'items' in data['data'] and len(data['data']['items']) > 0:
-        for i in range(0, len(data['data']['items'])):
-            item = data['data']['items'][i]
-
-            if 'note_card' in item and 'user' in item['note_card']:
-                note_card = item['note_card']
-                cover = ''
-                if 'image_list' in note_card and len(note_card['image_list']) > 0 and note_card['image_list'][0][
-                    'url_pre']:
-                    cover = note_card['image_list'][0]['url_pre']
-
-                data_format = datetime.fromtimestamp(note_card.get('time', 0) / 1000)
-                liked_count = item['note_card']['interact_info']['liked_count']
-                comment_count = item['note_card']['interact_info']['comment_count']
-                collected_count = item['note_card']['interact_info']['collected_count']
-
-                url = f'https://www.xiaohongshu.com/explore/{params["note_id"]}?xsec_token={params["xsec_token"]}'
-                result = f"标题: {note_card.get('title', '')}\n"
-                result += f"作者: {note_card['user'].get('nickname', '')}\n"
-                result += f"发布时间: {data_format}\n"
-                result += f"点赞数: {liked_count}\n"
-                result += f"评论数: {comment_count}\n"
-                result += f"收藏数: {collected_count}\n"
-                result += f"链接: {url}\n\n"
-                result += f"内容:\n{note_card.get('desc', '')}\n"
-                result += f"封面:\n{cover}"
-
-            break
-    else:
-        result = await check_cookie()
-        if "有效" in result:
-            result = "获取失败"
-    return result
-
-
-@mcp.tool()
-async def get_note_comments(url: str) -> str:
-    """获取笔记的所有评论(包括一级和二级评论),参数url要带上xsec_token
-
-    Args:
-        url: 笔记 url
-    """
-    params = get_nodeid_token(url=url)
-    
-    # 使用新的全量评论接口
-    data = await xhs_api.get_note_all_comment(params['note_id'], params['xsec_token'])
-    logger.info(f'url:{url},data:{data}')
-
-    result = ""
-    if data.get('success', False) and len(data.get('data', [])) > 0:
-        for i, comment in enumerate(data['data']):
-            comment_time = datetime.fromtimestamp(comment['create_time'] / 1000)
-            result += f"{i+1}. {comment['user_info']['nickname']}（{comment_time}）: {comment['content']}\n"
-            
-            # 如果有二级评论，也显示出来
-            if 'sub_comments' in comment and len(comment['sub_comments']) > 0:
-                for j, sub_comment in enumerate(comment['sub_comments']):
-                    sub_comment_time = datetime.fromtimestamp(sub_comment['create_time'] / 1000)
-                    result += f"    └─ {sub_comment['user_info']['nickname']}（{sub_comment_time}）: {sub_comment['content']}\n"
-            result += "\n"
-    else:
-        result = await check_cookie()
-        if "有效" in result:
-            result = "暂无评论"
-
-    return result
-
-
-@mcp.tool()
-async def post_comment(comment: str, note_id: str) -> str:
-    """发布评论到指定笔记
-
-    Args:
-        note_id: 笔记 note_id
-        comment: 要发布的评论内容
-    """
-    # params = get_nodeid_token(url)
-    response = await xhs_api.post_comment(note_id, comment)
-    if 'success' in response and response['success'] == True:
-        return "回复成功"
-    else:
-        result = await check_cookie()
-        if "有效" in result:
-            return "回复失败"
-        else:
-            return result
-
+# 还原工作路径（如果有必要的话）
+# os.chdir(current_dir) 
+# 由于数据可能保存在 temp 文件夹，我们最好就在 spider 目录下执行，这样 spider 的文件导出也不会报错。
 
 @mcp.tool()
 async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
@@ -222,27 +71,30 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
         包含搜索结果、笔记内容、评论数据等完整信息
     """
     try:
-        # 1. 搜索笔记
-        search_data = await xhs_api.search_notes(keywords)
         logger.info(f'搜索关键词: {keywords}, 最大获取数量: {max_notes}')
         
-        if 'data' not in search_data or 'items' not in search_data['data'] or len(search_data['data']['items']) == 0:
-            cookie_status = await check_cookie()
-            if "有效" in cookie_status:
-                return f"未找到与\"{keywords}\"相关的笔记"
-            else:
-                return cookie_status
+        # 1. 搜索笔记
+        # sort_type_choice: 0 综合排序
+        # note_type: 0 不限
+        # note_time: 0 不限
+        # note_range: 0 不限
+        # pos_distance: 0 不限
+        success, msg, search_data = data_spider.xhs_apis.search_some_note(
+            keywords, max_notes, cookies_str, 0, 0, 0, 0, 0, None, None
+        )
         
-        # 过滤有效的笔记，与search_notes保持一致的过滤逻辑
-        valid_items = []
-        for item in search_data['data']['items']:
-            if 'note_card' in item and 'display_title' in item['note_card']:
-                valid_items.append(item)
-        
-        if len(valid_items) == 0:
+        if not success:
+            return f"搜索失败: {msg}"
+            
+        if not search_data:
+            return f"未找到与\"{keywords}\"相关的笔记"
+            
+        # 过滤出笔记类型的
+        notes = list(filter(lambda x: x.get('model_type') == "note", search_data))
+        if not notes:
             return f"未找到与\"{keywords}\"相关的有效笔记"
-        
-        items = valid_items[:max_notes]  # 限制获取数量
+            
+        items = notes[:max_notes]  # 限制获取数量
         total_notes = len(items)
         
         # 2. 批量获取笔记内容和评论
@@ -251,7 +103,8 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
         
         for i, item in enumerate(items):
             note_id = item['id']
-            xsec_token = item['xsec_token']
+            xsec_token = item.get('xsec_token', '')
+            note_url = f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token={xsec_token}"
             
             logger.info(f'正在处理第 {i+1}/{total_notes} 篇笔记: {note_id}')
             
@@ -259,9 +112,9 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
                 "note_id": note_id,
                 "xsec_token": xsec_token,
                 "search_info": {
-                    "title": item['note_card'].get('display_title', ''),
-                    "liked_count": item['note_card']['interact_info'].get('liked_count', 0),
-                    "url": f'https://www.xiaohongshu.com/explore/{note_id}?xsec_token={xsec_token}'
+                    "title": item.get('display_title', ''),
+                    "liked_count": 0, # search API return structure might differ slightly
+                    "url": note_url
                 },
                 "content": None,
                 "comments": None,
@@ -270,14 +123,15 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
             
             # 获取笔记内容
             try:
-                content_data = await xhs_api.get_note_content(note_id=note_id, xsec_token=xsec_token)
-
-                logger.info(f'content_data:{content_data}')
-
-                if 'data' in content_data and 'items' in content_data['data'] and len(content_data['data']['items']) > 0:
-                    content_item = content_data['data']['items'][0]
-                    if 'note_card' in content_item:
-                        note_card = content_item['note_card']
+                # 获取原汁原味的详情 API，或者把 success_detail, msg_detail, content_data 打印出来
+                success_detail, msg_detail, content_data = data_spider.xhs_apis.get_note_info(note_url, cookies_str)
+                logger.info(f"content_data: {type(content_data)}")
+                if success_detail and content_data:
+                    # spider_note 返回的数据结构
+                    if isinstance(content_data, dict) and 'data' in content_data and 'items' in content_data['data'] and len(content_data['data']['items']) > 0:
+                        content_item = content_data['data']['items'][0]
+                        note_card = content_item.get('note_card', {})
+                        
                         cover = ''
                         if 'image_list' in note_card and len(note_card['image_list']) > 0:
                             cover = note_card['image_list'][0].get('url_pre', '')
@@ -288,14 +142,17 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
                             "title": note_card.get('title', ''),
                             "author": note_card.get('user', {}).get('nickname', ''),
                             "publish_time": data_format,
-                            "liked_count": content_item['note_card']['interact_info'].get('liked_count', 0),
-                            "comment_count": content_item['note_card']['interact_info'].get('comment_count', 0),
-                            "collected_count": content_item['note_card']['interact_info'].get('collected_count', 0),
+                            "liked_count": note_card.get('interact_info', {}).get('liked_count', 0),
+                            "comment_count": note_card.get('interact_info', {}).get('comment_count', 0),
+                            "collected_count": note_card.get('interact_info', {}).get('collected_count', 0),
                             "desc": note_card.get('desc', ''),
                             "cover": cover
                         }
+                    else:
+                        note_result["errors"].append("获取笔记内容失败(数据格式非dict)")
+                        failed_operations.append(f"笔记内容获取失败(格式错误): {note_id}")
                 else:
-                    note_result["errors"].append("获取笔记内容失败")
+                    note_result["errors"].append(f"获取笔记内容失败: {msg_detail}")
                     failed_operations.append(f"笔记内容获取失败: {note_id}")
             except Exception as e:
                 logger.error(f"获取笔记内容失败 {note_id}: {e}")
@@ -304,20 +161,23 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
             
             # 获取笔记评论（包括一级和二级评论）
             try:
-                comments_data = await xhs_api.get_note_all_comment(note_id, xsec_token)
-
-                logger.info(f'comments_data:{comments_data}')
-
-                if comments_data.get('success', False) and len(comments_data.get('data', [])) > 0:
+                success_comment, msg_comment, comments_data = data_spider.xhs_apis.get_note_all_comment(note_url, cookies_str)
+                
+                if success_comment and comments_data:
                     comments_list = []
-                    for comment in comments_data['data']:
-                        comment_time = datetime.fromtimestamp(comment['create_time'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                        
+                    for comment in comments_data:
+                        # 兼容处理时间格式，可能是毫秒级时间戳，也可能已经是格式化字符串
+                        create_time = comment.get('create_time', 0)
+                        if isinstance(create_time, (int, float)):
+                            comment_time = datetime.fromtimestamp(create_time / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            comment_time = str(create_time)
+                            
                         # 一级评论数据
                         comment_item = {
                             "comment_id": comment.get('id', ''),
-                            "user": comment['user_info'].get('nickname', ''),
-                            "user_id": comment['user_info'].get('user_id', ''),
+                            "user": comment.get('user_info', {}).get('nickname', ''),
+                            "user_id": comment.get('user_info', {}).get('user_id', ''),
                             "content": comment.get('content', ''),
                             "create_time": comment_time,
                             "like_count": comment.get('like_count', 0),
@@ -327,11 +187,16 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
                         # 处理二级评论
                         if 'sub_comments' in comment and len(comment['sub_comments']) > 0:
                             for sub_comment in comment['sub_comments']:
-                                sub_comment_time = datetime.fromtimestamp(sub_comment['create_time'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                                sub_create_time = sub_comment.get('create_time', 0)
+                                if isinstance(sub_create_time, (int, float)):
+                                    sub_comment_time = datetime.fromtimestamp(sub_create_time / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                                else:
+                                    sub_comment_time = str(sub_create_time)
+                                    
                                 sub_comment_item = {
                                     "comment_id": sub_comment.get('id', ''),
-                                    "user": sub_comment['user_info'].get('nickname', ''),
-                                    "user_id": sub_comment['user_info'].get('user_id', ''),
+                                    "user": sub_comment.get('user_info', {}).get('nickname', ''),
+                                    "user_id": sub_comment.get('user_info', {}).get('user_id', ''),
                                     "content": sub_comment.get('content', ''),
                                     "create_time": sub_comment_time,
                                     "like_count": sub_comment.get('like_count', 0),
@@ -392,11 +257,10 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
             logger.info(f"数据已保存到文件: {filename}")
         except Exception as e:
             logger.error(f"保存文件失败: {e}")
-            return f"数据获取完成但保存文件失败: {str(e)}"
-        
+            # 即使保存失败也继续返回文本给大模型
+            
         # 4. 提取指定字段并拼接成字符串返回给大模型
         all_relevant_text_parts = []
-        # output_data["notes"] 即为之前构建的 results 列表
         for note_data in output_data.get("notes", []):
             # 提取笔记标题
             if note_data.get("content") and note_data["content"].get("title"):
@@ -406,16 +270,15 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
             # 提取笔记正文
             if note_data.get("content") and note_data["content"].get("desc"):
                 desc = str(note_data["content"]["desc"])
-                all_relevant_text_parts.append(f"笔记正文：\\n{desc}") # Adding a newline for better readability of description
+                all_relevant_text_parts.append(f"笔记正文：\n{desc}")
                 
             # 提取评论和子评论内容
             if note_data.get("comments") and note_data["comments"].get("comments"):
-                comments_section = ["\\n--- 评论区 ---"] # Add a separator for comments section
+                comments_section = ["\n--- 评论区 ---"]
                 has_comments = False
                 for comment in note_data["comments"]["comments"]:
                     # 过滤掉点赞数为0的一级评论
                     comment_like_count = comment.get("like_count", 0)
-                    # 处理like_count可能是字符串的情况
                     if isinstance(comment_like_count, str):
                         try:
                             comment_like_count = int(comment_like_count)
@@ -431,7 +294,6 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
                     if comment.get("sub_comments"):
                         for sub_comment in comment["sub_comments"]:
                             sub_comment_like_count = sub_comment.get("like_count", 0)
-                            # 处理like_count可能是字符串的情况
                             if isinstance(sub_comment_like_count, str):
                                 try:
                                     sub_comment_like_count = int(sub_comment_like_count)
@@ -444,18 +306,17 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
                                 has_comments = True
                 if has_comments:
                     all_relevant_text_parts.extend(comments_section)
-            all_relevant_text_parts.append("\\n====================\\n") # Separator between notes
+            all_relevant_text_parts.append("\n====================\n")
         
-        final_text_blob = "\\n".join(all_relevant_text_parts)
+        final_text_blob = "\n".join(all_relevant_text_parts)
 
-        logger.info(f"final_text_blob:{final_text_blob}")
+        logger.info(f"成功获取并解析数据")
 
         return final_text_blob
         
     except Exception as e:
         logger.error(f"批量获取过程中发生错误: {e}")
         return f"批量获取失败: {str(e)}"
-
 
 if __name__ == "__main__":
     logger.info("mcp run")
