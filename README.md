@@ -27,7 +27,7 @@ python main.py --type sse --port 11451
 
 ## 功能支持
 
-- `search_notes_with_contents`: 搜索指定关键词的笔记并批量获取内容和一二级评论
+- `search_notes_with_contents`: 搜索指定关键词的笔记并批量获取内容和一二级评论（为精简返回给大模型的内容体积，点赞数为 0 的评论会被自动过滤掉）。
 
 ## 如何添加到 Cursor
 

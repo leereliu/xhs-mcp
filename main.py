@@ -61,7 +61,8 @@ data_spider = Data_Spider()
 
 @mcp.tool()
 async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
-    """根据关键词搜索笔记并批量获取内容和评论，返回压缩的JSON数据
+    """根据关键词搜索笔记并批量获取内容和评论，返回压缩的JSON数据。
+    注意：为了精简数据给大模型使用，目前策略会自动过滤掉点赞数为 0 的一级和二级评论。
 
     Args:
         keywords: 搜索关键词
@@ -277,16 +278,30 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
                 comments_section = ["\n--- 评论区 ---"]
                 has_comments = False
                 for comment in note_data["comments"]["comments"]:
-                    # 取消过滤点赞数为0的限制，把所有的评论都加入返回结果中
-                    if comment.get("content"):
+                    # 过滤掉点赞数为0的一级评论
+                    comment_like_count = comment.get("like_count", 0)
+                    if isinstance(comment_like_count, str):
+                        try:
+                            comment_like_count = int(comment_like_count)
+                        except ValueError:
+                            comment_like_count = 0
+                    
+                    if comment.get("content") and comment_like_count > 0:
                         comment_content = str(comment["content"])
                         comments_section.append(f"评论：{comment_content}")
                         has_comments = True
                     
-                    # 处理子评论，同样取消过滤点赞数为0的限制
+                    # 处理子评论，同样过滤掉点赞数为0的
                     if comment.get("sub_comments"):
                         for sub_comment in comment["sub_comments"]:
-                            if sub_comment.get("content"):
+                            sub_comment_like_count = sub_comment.get("like_count", 0)
+                            if isinstance(sub_comment_like_count, str):
+                                try:
+                                    sub_comment_like_count = int(sub_comment_like_count)
+                                except ValueError:
+                                    sub_comment_like_count = 0
+                            
+                            if sub_comment.get("content") and sub_comment_like_count > 0:
                                 sub_comment_content = str(sub_comment["content"])
                                 comments_section.append(f"  回复：{sub_comment_content}")
                                 has_comments = True
