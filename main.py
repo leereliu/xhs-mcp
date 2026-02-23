@@ -121,7 +121,7 @@ async def search_notes_with_contents(keywords: str, max_notes: int = 20) -> str:
         # note_range: 0 不限
         # pos_distance: 0 不限
         success, msg, search_data = data_spider.xhs_apis.search_some_note(
-            keywords, max_notes, cookies_str, 0, 0, 0, 0, 0, None, None
+            keywords, max_notes, cookies_str, 2, 0, 0, 0, 0, None, None
         )
         
         if not success:
