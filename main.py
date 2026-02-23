@@ -51,8 +51,30 @@ args = parser.parse_args()
 # 初始化 MCP
 mcp = FastMCP("小红书", port=args.port)
 
+def get_edge_cookie():
+    try:
+        import browser_cookie3
+        cj = browser_cookie3.edge(domain_name='.xiaohongshu.com')
+        cookie_dict = {}
+        for cookie in cj:
+            cookie_dict[cookie.name] = cookie.value
+            
+        if cookie_dict:
+            cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
+            logger.info("成功从 Edge 浏览器提取小红书 Cookie")
+            return cookie_str
+    except ImportError:
+        logger.warning("未安装 browser-cookie3，将降级使用 .env 中的 cookie")
+    except Exception as e:
+        logger.warning(f"从 Edge 获取 Cookie 失败: {e}")
+    return None
+
 # 初始化爬虫对象
-cookies_str, base_path = init()
+# 优先从 Edge 获取，如果失败则回退到从 spider/.env 获取
+edge_cookie = get_edge_cookie()
+env_cookie, base_path = init()
+cookies_str = edge_cookie if edge_cookie else env_cookie
+
 data_spider = Data_Spider()
 
 # 还原工作路径（如果有必要的话）

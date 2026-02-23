@@ -11,7 +11,8 @@ uv sync # 或者 pip install -r requirements.txt
 ```
 
 2. 登录小红书并获取 cookie：
-需要在 `spider/.env` 文件中填入正确的小红书登录 cookie。格式如下：
+**推荐（自动）**：直接在你的 Edge 浏览器中登录小红书（`www.xiaohongshu.com`）即可，程序会自动使用 `browser_cookie3` 提取。
+**手动（备选）**：或者在 `spider/.env` 文件中填入正确的小红书登录 cookie，格式如下：
 ```env
 cookie="你的cookie"
 ```
