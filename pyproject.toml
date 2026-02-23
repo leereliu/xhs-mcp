@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "browser-cookie3>=0.20.1",
     "fastmcp>=3.0.2",
     "loguru>=0.7.3",
     "mcp[cli]>=1.26.0",

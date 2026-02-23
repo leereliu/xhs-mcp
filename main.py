@@ -51,29 +51,47 @@ args = parser.parse_args()
 # 初始化 MCP
 mcp = FastMCP("小红书", port=args.port)
 
-def get_edge_cookie():
+def get_browser_cookie():
     try:
         import browser_cookie3
-        cj = browser_cookie3.edge(domain_name='.xiaohongshu.com')
-        cookie_dict = {}
-        for cookie in cj:
-            cookie_dict[cookie.name] = cookie.value
+        cookie_str = None
+        # 1. 尝试 Edge
+        try:
+            cj = browser_cookie3.edge(domain_name='.xiaohongshu.com')
+            cookie_dict = {cookie.name: cookie.value for cookie in cj}
+            if cookie_dict:
+                cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
+                logger.info("成功从 Edge 浏览器提取小红书 Cookie")
+                return cookie_str
+        except Exception as e:
+            logger.debug(f"尝试从 Edge 获取 Cookie 失败: {e}")
             
-        if cookie_dict:
-            cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
-            logger.info("成功从 Edge 浏览器提取小红书 Cookie")
-            return cookie_str
+        # 2. 尝试 Chrome
+        try:
+            cj = browser_cookie3.chrome(domain_name='.xiaohongshu.com')
+            cookie_dict = {cookie.name: cookie.value for cookie in cj}
+            if cookie_dict:
+                cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
+                logger.info("成功从 Chrome 浏览器提取小红书 Cookie")
+                return cookie_str
+        except Exception as e:
+            logger.debug(f"尝试从 Chrome 获取 Cookie 失败: {e}")
+            
     except ImportError:
         logger.warning("未安装 browser-cookie3，将降级使用 .env 中的 cookie")
     except Exception as e:
-        logger.warning(f"从 Edge 获取 Cookie 失败: {e}")
+        logger.warning(f"获取浏览器 Cookie 失败: {e}")
     return None
 
 # 初始化爬虫对象
-# 优先从 Edge 获取，如果失败则回退到从 spider/.env 获取
-edge_cookie = get_edge_cookie()
+# 优先从 Edge 获取，如果失败则回退到 Chrome，如果再次失败则从 spider/.env 获取
+browser_cookie = get_browser_cookie()
 env_cookie, base_path = init()
-cookies_str = edge_cookie if edge_cookie else env_cookie
+cookies_str = browser_cookie if browser_cookie else env_cookie
+
+if not cookies_str:
+    logger.error("未找到有效的 Cookie (Edge/Chrome/env 均未找到)，程序无法继续！")
+    raise ValueError("Missing Xiaohongshu Cookie. Please login in Edge/Chrome or provide it in spider/.env")
 
 data_spider = Data_Spider()
 

@@ -11,11 +11,12 @@ uv sync # 或者 pip install -r requirements.txt
 ```
 
 2. 登录小红书并获取 cookie：
-**推荐（自动）**：直接在你的 Edge 浏览器中登录小红书（`www.xiaohongshu.com`）即可，程序会自动使用 `browser_cookie3` 提取。
-**手动（备选）**：或者在 `spider/.env` 文件中填入正确的小红书登录 cookie，格式如下：
+**推荐（自动）**：直接在你的 Edge 或 Chrome 浏览器中登录小红书（`www.xiaohongshu.com`）即可，程序会自动使用 `browser_cookie3` 提取（优先级：Edge > Chrome）。
+**手动（备选）**：如果都没开浏览器，可以在 `spider/.env` 文件中填入正确的小红书登录 cookie，格式如下：
 ```env
 cookie="你的cookie"
 ```
+*(如果所有渠道都未能提取到 cookie，程序将报错并退出)*
 
 3. 运行 MCP Server：
 ```bash
